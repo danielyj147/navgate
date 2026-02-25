@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   shuttleSchedules,
   RouteSchedule,
@@ -10,77 +10,151 @@ import {
   toMinutes,
 } from "@/data/shuttle-schedules";
 import { EasternTime, getEasternTime } from "@/lib/time-utils";
-import { ShuttleVehicle } from "@/types";
+import { ShuttleRoute, ShuttleVehicle } from "@/types";
 import { fetchVehicles } from "@/lib/shuttle-api";
 
 interface ShuttlePanelProps {
   dark: boolean;
-  enabledRoutes: Set<number>;
-  onToggleRoute: (routeID: number) => void;
+  apiRoutes: ShuttleRoute[];
+  visibleRouteIDs: Set<number>;
+  onToggleRouteVisibility: (routeID: number) => void;
+  showVehicles: boolean;
+  onToggleVehicles: () => void;
+  showStops: boolean;
+  onToggleStops: () => void;
   onBack: () => void;
+}
+
+/** Map schedule route names to their primary API route IDs. */
+const SCHEDULE_TO_API: Record<string, number> = {
+  "Bookstore-Apartments": 12624,
+  Townhouse: 12626,
+  Shopping: 12625,
+  Wellness: 12627,
+};
+
+/** Client-side route color overrides (without leading #). */
+const ROUTE_COLOR_OVERRIDES: Record<number, string> = {
+  12624: "e10028", // Bookstore-Apartments → red
+  12625: "2563eb", // Shopping → blue
+};
+
+/** Get display color for an API route, applying overrides. */
+function getRouteColor(route: ShuttleRoute): string {
+  return ROUTE_COLOR_OVERRIDES[route.routeID] ?? route.color;
 }
 
 export default function ShuttlePanel({
   dark,
-  enabledRoutes,
-  onToggleRoute,
+  apiRoutes,
+  visibleRouteIDs,
+  onToggleRouteVisibility,
+  showVehicles,
+  onToggleVehicles,
+  showStops,
+  onToggleStops,
   onBack,
 }: ShuttlePanelProps) {
   const [now, setNow] = useState(() => new Date());
   const [expandedRoute, setExpandedRoute] = useState<string | null>(null);
   const [expandedSub, setExpandedSub] = useState<string | null>(null);
   const [activeVehicles, setActiveVehicles] = useState<ShuttleVehicle[]>([]);
+  const [showInactive, setShowInactive] = useState(false);
+  const [showInactiveRoutes, setShowInactiveRoutes] = useState(false);
+  const prevLiveRef = useRef<Set<number>>(new Set());
 
-  // Tick every 15s to keep "next departure" fresh
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 15_000);
     return () => clearInterval(id);
   }, []);
 
-  // Fetch vehicles for active count
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       try {
         const v = await fetchVehicles();
         if (!cancelled) setActiveVehicles(v.filter((x) => x.routeID !== -1));
-      } catch {
-        /* silent */
-      }
+      } catch { /* silent */ }
     };
     load();
     const id = setInterval(load, 10_000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
+    return () => { cancelled = true; clearInterval(id); };
   }, []);
+
+  // Auto-check routes that gain vehicles, auto-uncheck routes that lose vehicles
+  useEffect(() => {
+    const currentLive = new Set(activeVehicles.map((v) => v.routeID));
+    const prev = prevLiveRef.current;
+
+    // Find newly active and newly inactive routes
+    const newlyActive = [...currentLive].filter((id) => !prev.has(id));
+    const newlyInactive = [...prev].filter((id) => !currentLive.has(id));
+
+    if (newlyActive.length > 0 || newlyInactive.length > 0) {
+      for (const id of newlyActive) {
+        if (!visibleRouteIDs.has(id)) onToggleRouteVisibility(id);
+      }
+      for (const id of newlyInactive) {
+        if (visibleRouteIDs.has(id)) onToggleRouteVisibility(id);
+      }
+    }
+
+    prevLiveRef.current = currentLive;
+  }, [activeVehicles]); // intentionally omit visibleRouteIDs/onToggleRouteVisibility to avoid loops
 
   const eastern = useMemo(() => getEasternTime(now), [now]);
 
-  // ── Colors ────────────────────────────────────────────
+  // Set of API route IDs that currently have at least one vehicle
+  const liveRouteIDs = useMemo(
+    () => new Set(activeVehicles.map((v) => v.routeID)),
+    [activeVehicles]
+  );
+
+  // Count vehicles per route
+  const vehicleCountByRoute = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const v of activeVehicles) {
+      m.set(v.routeID, (m.get(v.routeID) ?? 0) + 1);
+    }
+    return m;
+  }, [activeVehicles]);
+
+  // Split schedules into active (have vehicles) and inactive
+  const { activeSchedules, inactiveSchedules } = useMemo(() => {
+    const active: RouteSchedule[] = [];
+    const inactive: RouteSchedule[] = [];
+    for (const sched of shuttleSchedules) {
+      const apiID = SCHEDULE_TO_API[sched.routeName];
+      if (apiID && liveRouteIDs.has(apiID)) {
+        active.push(sched);
+      } else {
+        inactive.push(sched);
+      }
+    }
+    return { activeSchedules: active, inactiveSchedules: inactive };
+  }, [liveRouteIDs]);
+
   const d = dark;
   const bg = d ? "#2a2a3d" : "#ffffff";
   const bgCard = d ? "#313148" : "#f8f8fb";
-  const bgCardHover = d ? "#3a3a58" : "#f0f0f5";
   const text = d ? "#eaeaea" : "#1a1a1a";
   const textMuted = d ? "#9999bb" : "#666";
   const textFaint = d ? "#6e6e8a" : "#aaa";
   const border = d ? "#3d3d55" : "#e5e5e5";
   const bgActive = d ? "#2a4a2a" : "#e8f5e9";
   const bgInactive = d ? "#3d2a2a" : "#fef3f0";
+  const bgControl = d ? "#282840" : "#f0f0f5";
 
-  const toggleRoute = useCallback(
-    (routeName: string) => {
-      setExpandedRoute((prev) => (prev === routeName ? null : routeName));
-      setExpandedSub(null);
-    },
-    []
-  );
+  const toggleExpand = useCallback((routeName: string) => {
+    setExpandedRoute((prev) => (prev === routeName ? null : routeName));
+    setExpandedSub(null);
+  }, []);
 
   const toggleSub = useCallback((key: string) => {
     setExpandedSub((prev) => (prev === key ? null : key));
   }, []);
+
+  const colors = { bgCard, text, textMuted, textFaint, border, bgActive, bgInactive };
 
   return (
     <div
@@ -94,8 +168,8 @@ export default function ShuttlePanel({
       }}
     >
       {/* Header */}
-      <div style={{ padding: "14px 14px 12px", borderBottom: `1px solid ${border}` }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+      <div style={{ padding: "14px 14px 10px", borderBottom: `1px solid ${border}` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
           <button
             onClick={onBack}
             style={{
@@ -118,26 +192,214 @@ export default function ShuttlePanel({
         <div style={{ fontSize: 11, color: textMuted, marginLeft: 28 }}>
           {activeVehicles.length} vehicle{activeVehicles.length !== 1 ? "s" : ""} active
         </div>
+
+        {/* Map layer controls */}
+        <div
+          style={{
+            marginTop: 10,
+            padding: "8px 10px",
+            background: bgControl,
+            borderRadius: 6,
+            border: `1px solid ${border}`,
+          }}
+        >
+          <div style={{ fontSize: 11, fontWeight: 600, color: textMuted, marginBottom: 6 }}>
+            Show on map
+          </div>
+
+          {/* Active routes — shown directly */}
+          {apiRoutes
+            .filter((r) => liveRouteIDs.has(r.routeID))
+            .map((r) => (
+              <RouteCheckbox
+                key={r.routeID}
+                route={r}
+                checked={visibleRouteIDs.has(r.routeID)}
+                count={vehicleCountByRoute.get(r.routeID) ?? 0}
+                onToggle={() => onToggleRouteVisibility(r.routeID)}
+                text={text}
+                textFaint={textFaint}
+                dark={d}
+              />
+            ))}
+
+          {/* Inactive routes — collapsible */}
+          {apiRoutes.filter((r) => !liveRouteIDs.has(r.routeID)).length > 0 && (
+            <>
+              <button
+                onClick={() => setShowInactiveRoutes((v) => !v)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  padding: "4px 0",
+                  fontSize: 10,
+                  color: textFaint,
+                  width: "100%",
+                }}
+              >
+                <span
+                  style={{
+                    transform: showInactiveRoutes ? "rotate(90deg)" : "rotate(0)",
+                    transition: "transform 0.15s",
+                  }}
+                >
+                  &#9656;
+                </span>
+                Inactive routes ({apiRoutes.filter((r) => !liveRouteIDs.has(r.routeID)).length})
+              </button>
+              {showInactiveRoutes &&
+                apiRoutes
+                  .filter((r) => !liveRouteIDs.has(r.routeID))
+                  .map((r) => (
+                    <RouteCheckbox
+                      key={r.routeID}
+                      route={r}
+                      checked={visibleRouteIDs.has(r.routeID)}
+                      count={0}
+                      onToggle={() => onToggleRouteVisibility(r.routeID)}
+                      text={text}
+                      textFaint={textFaint}
+                      dark={d}
+                    />
+                  ))}
+            </>
+          )}
+
+          <div style={{ borderTop: `1px solid ${border}`, margin: "6px 0" }} />
+
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "3px 0",
+              cursor: "pointer",
+              fontSize: 12,
+              color: showVehicles ? text : textFaint,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={showVehicles}
+              onChange={onToggleVehicles}
+              style={{ accentColor: "#3b82f6", width: 14, height: 14, cursor: "pointer" }}
+            />
+            <span>Vehicles</span>
+          </label>
+
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "3px 0",
+              cursor: "pointer",
+              fontSize: 12,
+              color: showStops ? text : textFaint,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={showStops}
+              onChange={onToggleStops}
+              style={{ accentColor: "#3b82f6", width: 14, height: 14, cursor: "pointer" }}
+            />
+            <span>Stops</span>
+          </label>
+        </div>
       </div>
 
-      {/* Route list */}
+      {/* Schedule cards */}
       <div style={{ flex: 1, overflowY: "auto", padding: "8px" }}>
-        {shuttleSchedules.map((route) => (
-          <RouteCard
-            key={route.routeName}
-            route={route}
-            eastern={eastern}
-            expanded={expandedRoute === route.routeName}
-            expandedSub={expandedSub}
-            onToggle={() => toggleRoute(route.routeName)}
-            onToggleSub={toggleSub}
-            dark={d}
-            colors={{ bgCard, bgCardHover, text, textMuted, textFaint, border, bgActive, bgInactive }}
-          />
-        ))}
+        {/* Active routes — shown directly */}
+        {activeSchedules.length > 0 && (
+          <>
+            <div style={{ fontSize: 11, fontWeight: 600, color: textMuted, padding: "4px 4px 6px", display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: d ? "#6bda6b" : "#2e7d32" }} />
+              Running now
+            </div>
+            {activeSchedules.map((route) => {
+              const apiID = SCHEDULE_TO_API[route.routeName];
+              const count = apiID ? vehicleCountByRoute.get(apiID) ?? 0 : 0;
+              return (
+                <RouteCard
+                  key={route.routeName}
+                  route={route}
+                  eastern={eastern}
+                  expanded={expandedRoute === route.routeName}
+                  expandedSub={expandedSub}
+                  onToggle={() => toggleExpand(route.routeName)}
+                  onToggleSub={toggleSub}
+                  dark={d}
+                  colors={colors}
+                  vehicleCount={count}
+                />
+              );
+            })}
+          </>
+        )}
+
+        {activeSchedules.length === 0 && (
+          <div style={{ padding: "12px 4px", fontSize: 12, color: textMuted, textAlign: "center" }}>
+            No shuttles are currently running
+          </div>
+        )}
+
+        {/* Inactive routes — collapsed accordion */}
+        {inactiveSchedules.length > 0 && (
+          <div style={{ marginTop: activeSchedules.length > 0 ? 8 : 0 }}>
+            <button
+              onClick={() => setShowInactive((v) => !v)}
+              style={{
+                width: "100%",
+                padding: "8px 4px",
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                fontSize: 11,
+                fontWeight: 600,
+                color: textFaint,
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 10,
+                  transform: showInactive ? "rotate(90deg)" : "rotate(0)",
+                  transition: "transform 0.15s",
+                }}
+              >
+                &#9656;
+              </span>
+              Other schedules ({inactiveSchedules.length})
+            </button>
+
+            {showInactive &&
+              inactiveSchedules.map((route) => (
+                <RouteCard
+                  key={route.routeName}
+                  route={route}
+                  eastern={eastern}
+                  expanded={expandedRoute === route.routeName}
+                  expandedSub={expandedSub}
+                  onToggle={() => toggleExpand(route.routeName)}
+                  onToggleSub={toggleSub}
+                  dark={d}
+                  colors={colors}
+                  vehicleCount={0}
+                />
+              ))}
+          </div>
+        )}
       </div>
 
-      {/* Footer link */}
+      {/* Footer */}
       <div
         style={{
           padding: "10px 14px",
@@ -163,6 +425,16 @@ export default function ShuttlePanel({
 
 // ─── RouteCard ──────────────────────────────────────────────────────
 
+interface Colors {
+  bgCard: string;
+  text: string;
+  textMuted: string;
+  textFaint: string;
+  border: string;
+  bgActive: string;
+  bgInactive: string;
+}
+
 interface RouteCardProps {
   route: RouteSchedule;
   eastern: EasternTime;
@@ -171,16 +443,8 @@ interface RouteCardProps {
   onToggle: () => void;
   onToggleSub: (key: string) => void;
   dark: boolean;
-  colors: {
-    bgCard: string;
-    bgCardHover: string;
-    text: string;
-    textMuted: string;
-    textFaint: string;
-    border: string;
-    bgActive: string;
-    bgInactive: string;
-  };
+  colors: Colors;
+  vehicleCount: number;
 }
 
 function RouteCard({
@@ -192,31 +456,21 @@ function RouteCard({
   onToggleSub,
   dark,
   colors,
+  vehicleCount,
 }: RouteCardProps) {
   const { bgCard, text, textMuted, textFaint, border, bgActive, bgInactive } = colors;
+  const hasVehicles = vehicleCount > 0;
 
-  // Is any sub-schedule currently active?
-  const anyActive = route.schedules.some((s) => isScheduleActive(s, eastern));
-
-  // Find the soonest next departure across all active sub-schedules
   let nextDep: string | null = null;
-  let nextSubLabel: string | null = null;
   for (const sub of route.schedules) {
     if (!sub.daysOfWeek.includes(eastern.dayOfWeek)) continue;
     const dep = getNextDeparture(sub, eastern);
-    if (dep) {
-      if (!nextDep || toMinutes(dep) < toMinutes(nextDep)) {
-        nextDep = dep;
-        nextSubLabel = sub.label;
-      }
+    if (dep && (!nextDep || toMinutes(dep) < toMinutes(nextDep))) {
+      nextDep = dep;
     }
   }
 
-  // Minutes until next departure
-  const minsUntil = nextDep
-    ? toMinutes(nextDep) - (eastern.minutesSinceMidnight)
-    : null;
-
+  const minsUntil = nextDep ? toMinutes(nextDep) - eastern.minutesSinceMidnight : null;
   const routeColor = `#${route.color}`;
 
   return (
@@ -229,7 +483,6 @@ function RouteCard({
         background: bgCard,
       }}
     >
-      {/* Card header */}
       <button
         onClick={onToggle}
         style={{
@@ -244,7 +497,6 @@ function RouteCard({
           textAlign: "left",
         }}
       >
-        {/* Route color dot */}
         <span
           style={{
             width: 10,
@@ -255,40 +507,36 @@ function RouteCard({
           }}
         />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: text }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: text, display: "flex", alignItems: "center", gap: 6 }}>
             {route.routeName}
+            {hasVehicles && (
+              <span style={{
+                fontSize: 10,
+                fontWeight: 600,
+                padding: "1px 6px",
+                borderRadius: 8,
+                background: bgActive,
+                color: dark ? "#6bda6b" : "#2e7d32",
+              }}>
+                {vehicleCount} bus{vehicleCount !== 1 ? "es" : ""}
+              </span>
+            )}
           </div>
           <div style={{ fontSize: 11, color: textMuted, marginTop: 1 }}>
-            {anyActive ? (
+            {hasVehicles ? (
               nextDep && minsUntil != null ? (
                 <>
                   Next: <strong style={{ color: routeColor }}>{nextDep}</strong>
                   <span style={{ color: textFaint }}> ({minsUntil} min)</span>
                 </>
               ) : (
-                "Running — no more departures today"
+                "Running"
               )
             ) : (
               "Not running now"
             )}
           </div>
         </div>
-        {/* Status badge */}
-        <span
-          style={{
-            fontSize: 10,
-            fontWeight: 600,
-            padding: "2px 8px",
-            borderRadius: 10,
-            background: anyActive ? bgActive : bgInactive,
-            color: anyActive ? (dark ? "#6bda6b" : "#2e7d32") : (dark ? "#da6b6b" : "#c62828"),
-            whiteSpace: "nowrap",
-            flexShrink: 0,
-          }}
-        >
-          {anyActive ? "Active" : "Inactive"}
-        </span>
-        {/* Chevron */}
         <span
           style={{
             fontSize: 12,
@@ -302,7 +550,6 @@ function RouteCard({
         </span>
       </button>
 
-      {/* Expanded sub-schedules */}
       {expanded && (
         <div style={{ padding: "0 12px 10px" }}>
           {route.schedules.map((sub) => {
@@ -315,7 +562,6 @@ function RouteCard({
 
             return (
               <div key={subKey} style={{ marginTop: 6 }}>
-                {/* Sub-schedule header */}
                 <button
                   onClick={() => onToggleSub(subKey)}
                   style={{
@@ -358,7 +604,6 @@ function RouteCard({
                   </div>
                 </button>
 
-                {/* Timetable */}
                 {subExpanded && (
                   <SubScheduleTable
                     sub={sub}
@@ -372,7 +617,6 @@ function RouteCard({
             );
           })}
 
-          {/* Link to source */}
           <div style={{ marginTop: 8, textAlign: "right" }}>
             <a
               href={route.sourceUrl}
@@ -393,27 +637,79 @@ function RouteCard({
   );
 }
 
+// ─── RouteCheckbox ─────────────────────────────────────────────────
+
+function RouteCheckbox({
+  route,
+  checked,
+  count,
+  onToggle,
+  text,
+  textFaint,
+  dark,
+}: {
+  route: ShuttleRoute;
+  checked: boolean;
+  count: number;
+  onToggle: () => void;
+  text: string;
+  textFaint: string;
+  dark: boolean;
+}) {
+  return (
+    <label
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "3px 0",
+        cursor: "pointer",
+        fontSize: 12,
+        color: checked ? text : textFaint,
+      }}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={onToggle}
+        style={{ accentColor: `#${getRouteColor(route)}`, width: 14, height: 14, cursor: "pointer" }}
+      />
+      <span
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: "50%",
+          background: `#${getRouteColor(route)}`,
+          opacity: checked ? 1 : 0.3,
+          flexShrink: 0,
+        }}
+      />
+      <span style={{ flex: 1 }}>{route.longName}</span>
+      {count > 0 && (
+        <span style={{ fontSize: 10, color: dark ? "#6bda6b" : "#2e7d32", fontWeight: 600 }}>
+          {count}
+        </span>
+      )}
+    </label>
+  );
+}
+
 // ─── SubScheduleTable ──────────────────────────────────────────────
 
-interface SubScheduleTableProps {
+function SubScheduleTable({
+  sub,
+  eastern,
+  routeColor,
+  dark,
+  colors,
+}: {
   sub: SubSchedule;
   eastern: EasternTime;
   routeColor: string;
   dark: boolean;
-  colors: {
-    bgCard: string;
-    bgCardHover: string;
-    text: string;
-    textMuted: string;
-    textFaint: string;
-    border: string;
-    bgActive: string;
-    bgInactive: string;
-  };
-}
-
-function SubScheduleTable({ sub, eastern, routeColor, dark, colors }: SubScheduleTableProps) {
-  const { text, textMuted, textFaint, border } = colors;
+  colors: Colors;
+}) {
+  const { text, textFaint, border, textMuted } = colors;
   const currentMins = eastern.minutesSinceMidnight;
   const isToday = sub.daysOfWeek.includes(eastern.dayOfWeek);
 
@@ -427,7 +723,6 @@ function SubScheduleTable({ sub, eastern, routeColor, dark, colors }: SubSchedul
         border: `1px solid ${border}`,
       }}
     >
-      {/* Stops header */}
       <div
         style={{
           padding: "6px 8px",
@@ -441,17 +736,14 @@ function SubScheduleTable({ sub, eastern, routeColor, dark, colors }: SubSchedul
         Stops: {sub.stops.map((s) => s.name).join(" \u2192 ")}
       </div>
 
-      {/* Departure list */}
       <div style={{ padding: "4px 0" }}>
         {sub.departures.map((dep, i) => {
           const depMins = toMinutes(dep);
           const lastStopOffset = sub.stops[sub.stops.length - 1]?.offset ?? 0;
           const isPast = isToday && depMins + lastStopOffset < currentMins;
           const isNext = isToday && !isPast && depMins > currentMins;
-          // Find the first "next" departure
           const isFirstNext =
-            isNext &&
-            (i === 0 || toMinutes(sub.departures[i - 1]) <= currentMins);
+            isNext && (i === 0 || toMinutes(sub.departures[i - 1]) <= currentMins);
 
           return (
             <div
@@ -463,9 +755,7 @@ function SubScheduleTable({ sub, eastern, routeColor, dark, colors }: SubSchedul
                 fontSize: 12,
                 color: isPast ? textFaint : text,
                 background: isFirstNext
-                  ? dark
-                    ? "rgba(100,180,255,0.1)"
-                    : "rgba(59,130,246,0.08)"
+                  ? dark ? "rgba(100,180,255,0.1)" : "rgba(59,130,246,0.08)"
                   : "transparent",
                 borderLeft: isFirstNext ? `3px solid ${routeColor}` : "3px solid transparent",
                 fontWeight: isFirstNext ? 600 : 400,
@@ -476,25 +766,12 @@ function SubScheduleTable({ sub, eastern, routeColor, dark, colors }: SubSchedul
               </span>
               <span>{dep}</span>
               {isFirstNext && (
-                <span
-                  style={{
-                    marginLeft: "auto",
-                    fontSize: 10,
-                    color: routeColor,
-                    fontWeight: 600,
-                  }}
-                >
+                <span style={{ marginLeft: "auto", fontSize: 10, color: routeColor, fontWeight: 600 }}>
                   next
                 </span>
               )}
               {isPast && (
-                <span
-                  style={{
-                    marginLeft: "auto",
-                    fontSize: 10,
-                    color: textFaint,
-                  }}
-                >
+                <span style={{ marginLeft: "auto", fontSize: 10, color: textFaint }}>
                   passed
                 </span>
               )}

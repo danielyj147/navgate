@@ -42,3 +42,45 @@ export function parseShapePoints(points: string): [number, number][] {
       return [lat, lng] as [number, number];
     });
 }
+
+/** Approximate distance in meters between two lat/lng points using equirectangular projection. */
+function approxDistanceMeters(
+  lat1: number, lng1: number,
+  lat2: number, lng2: number,
+): number {
+  const R = 6371000;
+  const toRad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * toRad;
+  const dLng = (lng2 - lng1) * toRad * Math.cos(((lat1 + lat2) / 2) * toRad);
+  return R * Math.sqrt(dLat * dLat + dLng * dLng);
+}
+
+/** Minimum distance (meters) from a point to a line segment [a, b]. */
+function pointToSegmentDistance(
+  point: [number, number],
+  a: [number, number],
+  b: [number, number],
+): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  if (dx === 0 && dy === 0) return approxDistanceMeters(point[0], point[1], a[0], a[1]);
+  const t = Math.max(0, Math.min(1,
+    ((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / (dx * dx + dy * dy),
+  ));
+  const projLat = a[0] + t * dx;
+  const projLng = a[1] + t * dy;
+  return approxDistanceMeters(point[0], point[1], projLat, projLng);
+}
+
+/** Minimum distance (meters) from a point to a polyline (array of lat/lng pairs). */
+export function pointToPolylineDistance(
+  point: [number, number],
+  polyline: [number, number][],
+): number {
+  let min = Infinity;
+  for (let i = 0; i < polyline.length - 1; i++) {
+    const d = pointToSegmentDistance(point, polyline[i], polyline[i + 1]);
+    if (d < min) min = d;
+  }
+  return min;
+}

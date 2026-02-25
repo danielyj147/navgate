@@ -10,10 +10,8 @@ const colorMap: Record<string, string> = {
 };
 
 const statusFilterOptions: { color: StatusColor; label: string }[] = [
-  { color: "green", label: "Available" },
-  { color: "yellow", label: "Soon" },
-  { color: "orange", label: "Closing" },
-  { color: "red", label: "Unavailable" },
+  { color: "yellow", label: "Opening soon" },
+  { color: "orange", label: "Closing soon" },
 ];
 
 const categoryFilterOptions: { value: string; label: string }[] = [

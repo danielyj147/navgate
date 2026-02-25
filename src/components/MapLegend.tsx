@@ -1,10 +1,10 @@
 "use client";
 
 const items = [
-  { color: "#16a34a", label: "Available" },
-  { color: "#ca8a04", label: "Available soon" },
-  { color: "#ea580c", label: "Unavailable soon" },
-  { color: "#dc2626", label: "Not available" },
+  { color: "#16a34a", label: "Open to all / Students only" },
+  { color: "#ca8a04", label: "Opening soon" },
+  { color: "#ea580c", label: "Closing soon" },
+  { color: "#dc2626", label: "Employees only / Closed" },
 ];
 
 interface Props {

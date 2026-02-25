@@ -2,11 +2,7 @@ export type LotCategory = "student" | "employee" | "restricted";
 
 export type StatusColor = "green" | "yellow" | "orange" | "red";
 
-export type StatusLabel =
-  | "Available"
-  | "Available soon"
-  | "Unavailable soon"
-  | "Not available";
+export type StatusLabel = string;
 
 export interface ParkingLot {
   id: string;

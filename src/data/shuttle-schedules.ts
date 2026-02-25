@@ -37,7 +37,7 @@ export interface RouteSchedule {
 
 const bookstoreApartments: RouteSchedule = {
   routeName: "Bookstore-Apartments",
-  color: "007a33",
+  color: "e10028",
   schedules: [
     {
       label: "Daytime",
@@ -97,7 +97,7 @@ const bookstoreApartments: RouteSchedule = {
 
 const townhouse: RouteSchedule = {
   routeName: "Townhouse",
-  color: "0033a0",
+  color: "f0aa00",
   schedules: [
     {
       label: "Daytime",
@@ -153,7 +153,7 @@ const townhouse: RouteSchedule = {
 
 const shopping: RouteSchedule = {
   routeName: "Shopping",
-  color: "e35205",
+  color: "2563eb",
   schedules: [
     {
       label: "Regular",

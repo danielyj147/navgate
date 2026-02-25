@@ -8,7 +8,8 @@ import "leaflet/dist/leaflet.css";
 import { parkingLots } from "@/data/lots";
 import { getEasternTime } from "@/lib/time-utils";
 import { getLotStatus } from "@/lib/availability";
-import { LotStatus, ParkingLot, StatusColor } from "@/types";
+import { LotStatus, ParkingLot, StatusColor, ShuttleRoute } from "@/types";
+import { fetchRoutes } from "@/lib/shuttle-api";
 
 import LotMarker from "./LotMarker";
 import MapLegend from "./MapLegend";
@@ -20,9 +21,24 @@ import ShuttlePanel from "./ShuttlePanel";
 const CAMPUS_CENTER: [number, number] = [42.8172, -75.5385];
 const UPDATE_INTERVAL = 15_000;
 
-const LIGHT_TILES = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
-const DARK_TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
+// Split tiles: base (no labels) + labels overlay — allows shuttle routes between them
+const LIGHT_BASE = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png";
+const LIGHT_LABELS = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png";
+const DARK_BASE = "https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png";
+const DARK_LABELS = "https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png";
 const ATTRIBUTION = '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>';
+
+/** Creates a pane for label tiles so they render above shuttle routes but below markers. */
+function LabelPane() {
+  const map = useMap();
+  useEffect(() => {
+    if (!map.getPane("tileLabels")) {
+      const p = map.createPane("tileLabels");
+      p.style.zIndex = "350";
+    }
+  }, [map]);
+  return null;
+}
 
 function DarkMapClass({ dark }: { dark: boolean }) {
   const map = useMap();
@@ -69,7 +85,21 @@ export default function ParkingMap() {
 
   // Shuttle state
   const [shuttleMode, setShuttleMode] = useState(true);
-  const [enabledRoutes, setEnabledRoutes] = useState<Set<number>>(new Set());
+  const [apiRoutes, setApiRoutes] = useState<ShuttleRoute[]>([]);
+  const [visibleRouteIDs, setVisibleRouteIDs] = useState<Set<number>>(new Set());
+  const [showVehicles, setShowVehicles] = useState(true);
+  const [showStops, setShowStops] = useState(true);
+
+  // Fetch API routes once and default all to visible
+  useEffect(() => {
+    let cancelled = false;
+    fetchRoutes().then((routes) => {
+      if (cancelled) return;
+      setApiRoutes(routes);
+      setVisibleRouteIDs(new Set(routes.map((r) => r.routeID)));
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -159,8 +189,8 @@ export default function ParkingMap() {
     });
   }, []);
 
-  const toggleRoute = useCallback((routeID: number) => {
-    setEnabledRoutes((prev) => {
+  const toggleRouteVisibility = useCallback((routeID: number) => {
+    setVisibleRouteIDs((prev) => {
       const next = new Set(prev);
       if (next.has(routeID)) next.delete(routeID);
       else next.add(routeID);
@@ -196,12 +226,16 @@ export default function ParkingMap() {
 
   return (
     <div style={{ display: "flex", height: "100vh", width: "100vw", background: isDark ? "#2a2a3d" : "#fff" }}>
-      {/* Sidebar: parking panel or shuttle panel */}
       {shuttleMode ? (
         <ShuttlePanel
           dark={isDark}
-          enabledRoutes={enabledRoutes}
-          onToggleRoute={toggleRoute}
+          apiRoutes={apiRoutes}
+          visibleRouteIDs={visibleRouteIDs}
+          onToggleRouteVisibility={toggleRouteVisibility}
+          showVehicles={showVehicles}
+          onToggleVehicles={() => setShowVehicles((v) => !v)}
+          showStops={showStops}
+          onToggleStops={() => setShowStops((v) => !v)}
           onBack={() => setShuttleMode(false)}
         />
       ) : (
@@ -234,11 +268,32 @@ export default function ParkingMap() {
           zoomControl={true}
         >
           <DarkMapClass dark={isDark} />
+          <LabelPane />
+
+          {/* Base tiles — no labels, so shuttle routes aren't hidden by road lines */}
           <TileLayer
-            key={isDark ? "dark" : "light"}
+            key={isDark ? "dark-base" : "light-base"}
             attribution={ATTRIBUTION}
-            url={isDark ? DARK_TILES : LIGHT_TILES}
+            url={isDark ? DARK_BASE : LIGHT_BASE}
           />
+
+          {/* Shuttle routes render here (z=300-301, between base and labels) */}
+          {shuttleMode && (
+            <ShuttleLayer
+              dark={isDark}
+              visibleRouteIDs={visibleRouteIDs}
+              showVehicles={showVehicles}
+              showStops={showStops}
+            />
+          )}
+
+          {/* Label tiles — road/place names above shuttle routes */}
+          <TileLayer
+            key={isDark ? "dark-labels" : "light-labels"}
+            url={isDark ? DARK_LABELS : LIGHT_LABELS}
+            pane="tileLabels"
+          />
+
           {parkingLots.map((lot) => {
             if (!filteredIds.has(lot.id)) return null;
             const status = statuses.get(lot.id)!;
@@ -260,12 +315,6 @@ export default function ParkingMap() {
             >
               <Popup>Your location</Popup>
             </CircleMarker>
-          )}
-          {shuttleMode && (
-            <ShuttleLayer
-              dark={isDark}
-              enabledRoutes={enabledRoutes.size > 0 ? enabledRoutes : undefined}
-            />
           )}
           <FlyToLot lot={selectedLot} />
         </MapContainer>

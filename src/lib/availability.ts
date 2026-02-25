@@ -49,8 +49,8 @@ export function getLotStatus(lot: ParkingLot, et: EasternTime): LotStatus {
   if (lot.category === "restricted") {
     return {
       color: "red",
-      label: "Not available",
-      reason: "Restricted — accessible parking only",
+      label: "Restricted",
+      reason: "Accessible parking only",
     };
   }
 
@@ -67,14 +67,14 @@ export function getLotStatus(lot: ParkingLot, et: EasternTime): LotStatus {
         if (lot.category === "employee" && !weekend) {
           return {
             color: "orange",
-            label: "Unavailable soon",
+            label: "Closing soon",
             reason: `Employee lot — closes at 7:00 AM (${minsUntilBusinessStart} min)`,
           };
         }
       }
       return {
         color: "green",
-        label: "Available",
+        label: "Open to all",
         reason: "Overnight exempt — parking allowed 24/7",
       };
     }
@@ -85,24 +85,24 @@ export function getLotStatus(lot: ParkingLot, et: EasternTime): LotStatus {
       if (lot.category === "student" || weekend) {
         return {
           color: "yellow",
-          label: "Available soon",
-          reason: `Available at 7:00 AM (${minsUntilBusinessStart} min)`,
+          label: "Opening soon",
+          reason: `Opens at 7:00 AM (${minsUntilBusinessStart} min)`,
         };
       }
       // Employee lots on weekday: business hours still restricted
       if (lot.category === "employee") {
         return {
           color: "red",
-          label: "Not available",
-          reason: "Employee lot — not available until 4:30 PM",
+          label: "Employees only",
+          reason: "Employee lot — opens to all at 4:30 PM",
         };
       }
     }
 
     return {
       color: "red",
-      label: "Not available",
-      reason: "Overnight restriction (3-7 AM) — no parking",
+      label: "Overnight closed",
+      reason: "Overnight restriction (3–7 AM) — no parking",
     };
   }
 
@@ -117,13 +117,13 @@ export function getLotStatus(lot: ParkingLot, et: EasternTime): LotStatus {
     ) {
       return {
         color: "orange",
-        label: "Unavailable soon",
+        label: "Closing soon",
         reason: `Overnight restriction at 3:00 AM (${minsUntilOvernight} min)`,
       };
     }
     return {
       color: "green",
-      label: "Available",
+      label: "Open to all",
       reason: "Weekend — all lots open",
     };
   }
@@ -136,8 +136,8 @@ export function getLotStatus(lot: ParkingLot, et: EasternTime): LotStatus {
       // Student lots are available during business hours
       return {
         color: "green",
-        label: "Available",
-        reason: "Student lot — available during business hours",
+        label: "Students only",
+        reason: "Student lot — open during business hours",
       };
     }
 
@@ -145,15 +145,15 @@ export function getLotStatus(lot: ParkingLot, et: EasternTime): LotStatus {
     if (minsUntilOpen <= TRANSITION_WINDOW) {
       return {
         color: "yellow",
-        label: "Available soon",
-        reason: `Open hours start at 4:30 PM (${minsUntilOpen} min)`,
+        label: "Opening soon",
+        reason: `Opens to all at 4:30 PM (${minsUntilOpen} min)`,
       };
     }
 
     return {
       color: "red",
-      label: "Not available",
-      reason: "Employee lot — available after 4:30 PM",
+      label: "Employees only",
+      reason: "Employee lot — opens to all at 4:30 PM",
     };
   }
 
@@ -163,8 +163,8 @@ export function getLotStatus(lot: ParkingLot, et: EasternTime): LotStatus {
   if (lot.category === "student") {
     return {
       color: "green",
-      label: "Available",
-      reason: "Student lot — always available",
+      label: "Students only",
+      reason: "Student lot — always open",
     };
   }
 
@@ -172,14 +172,14 @@ export function getLotStatus(lot: ParkingLot, et: EasternTime): LotStatus {
   if (!lot.overnightExempt && minsUntilOvernight <= TRANSITION_WINDOW) {
     return {
       color: "orange",
-      label: "Unavailable soon",
+      label: "Closing soon",
       reason: `Overnight restriction at 3:00 AM (${minsUntilOvernight} min)`,
     };
   }
 
   return {
     color: "green",
-    label: "Available",
-    reason: "Open hours — all lots available",
+    label: "Open to all",
+    reason: "Open hours — all lots open",
   };
 }
