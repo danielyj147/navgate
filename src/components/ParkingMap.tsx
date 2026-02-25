@@ -20,6 +20,29 @@ import ShuttlePanel from "./ShuttlePanel";
 
 const CAMPUS_CENTER: [number, number] = [42.8172, -75.5385];
 const UPDATE_INTERVAL = 15_000;
+const STORAGE_KEY = "colgate-parking-settings";
+
+interface StoredSettings {
+  dark?: boolean;
+  shuttleMode?: boolean;
+  visibleRouteIDs?: number[];
+  showVehicles?: boolean;
+  showStops?: boolean;
+}
+
+function loadSettings(): StoredSettings {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw) as StoredSettings;
+  } catch {}
+  return {};
+}
+
+function saveSettings(s: StoredSettings) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+  } catch {}
+}
 
 // Split tiles: base (no labels) + labels overlay — allows shuttle routes between them
 const LIGHT_BASE = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png";
@@ -71,9 +94,11 @@ function distanceKm(lat1: number, lng1: number, lat2: number, lng2: number): num
 }
 
 export default function ParkingMap() {
+  const [stored] = useState(loadSettings);
+
   const [now, setNow] = useState(() => new Date());
   const [selectedLot, setSelectedLot] = useState<ParkingLot | null>(null);
-  const [dark, setDark] = useState<boolean | null>(null);
+  const [dark, setDark] = useState<boolean | null>(stored.dark ?? null);
 
   const [search, setSearch] = useState("");
   const [statusFilters, setStatusFilters] = useState<Set<StatusColor>>(new Set());
@@ -84,29 +109,49 @@ export default function ParkingMap() {
   const [locatingUser, setLocatingUser] = useState(false);
 
   // Shuttle state
-  const [shuttleMode, setShuttleMode] = useState(true);
+  const [shuttleMode, setShuttleMode] = useState(stored.shuttleMode ?? true);
   const [apiRoutes, setApiRoutes] = useState<ShuttleRoute[]>([]);
-  const [visibleRouteIDs, setVisibleRouteIDs] = useState<Set<number>>(new Set());
-  const [showVehicles, setShowVehicles] = useState(true);
-  const [showStops, setShowStops] = useState(true);
+  const [visibleRouteIDs, setVisibleRouteIDs] = useState<Set<number>>(
+    stored.visibleRouteIDs ? new Set(stored.visibleRouteIDs) : new Set(),
+  );
+  const [showVehicles, setShowVehicles] = useState(stored.showVehicles ?? true);
+  const [showStops, setShowStops] = useState(stored.showStops ?? true);
 
-  // Fetch API routes once and default all to visible
+  // Fetch API routes once; default all visible only if no stored preference
   useEffect(() => {
     let cancelled = false;
     fetchRoutes().then((routes) => {
       if (cancelled) return;
       setApiRoutes(routes);
-      setVisibleRouteIDs(new Set(routes.map((r) => r.routeID)));
+      // Only default to all-visible when there's no stored preference
+      if (!stored.visibleRouteIDs) {
+        setVisibleRouteIDs(new Set(routes.map((r) => r.routeID)));
+      }
     }).catch(() => {});
     return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Persist settings whenever they change
   useEffect(() => {
+    saveSettings({
+      dark: dark ?? undefined,
+      shuttleMode,
+      visibleRouteIDs: [...visibleRouteIDs],
+      showVehicles,
+      showStops,
+    });
+  }, [dark, shuttleMode, visibleRouteIDs, showVehicles, showStops]);
+
+  useEffect(() => {
+    // Only listen to system preference if no stored dark mode
+    if (stored.dark != null) return;
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     setDark(mq.matches);
     const handler = (e: MediaQueryListEvent) => setDark(e.matches);
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -277,15 +322,13 @@ export default function ParkingMap() {
             url={isDark ? DARK_BASE : LIGHT_BASE}
           />
 
-          {/* Shuttle routes render here (z=300-301, between base and labels) */}
-          {shuttleMode && (
-            <ShuttleLayer
-              dark={isDark}
-              visibleRouteIDs={visibleRouteIDs}
-              showVehicles={showVehicles}
-              showStops={showStops}
-            />
-          )}
+          {/* Shuttle routes render here (z=300+, between base and labels) */}
+          <ShuttleLayer
+            dark={isDark}
+            visibleRouteIDs={visibleRouteIDs}
+            showVehicles={showVehicles}
+            showStops={showStops}
+          />
 
           {/* Label tiles — road/place names above shuttle routes */}
           <TileLayer

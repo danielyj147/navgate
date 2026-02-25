@@ -79,15 +79,17 @@ interface ShuttleLayerProps {
 /**
  * Creates custom Leaflet panes for proper z-ordering:
  *   shuttleRoutesOutline (z=300) — white/dark outline under colored line
- *   shuttleRoutes        (z=301) — colored route polylines
+ *   shuttleRoute-{id}    (z=301+) — per-route panes for polylines + arrows
  *   shuttleStops         (z=450) — stop circle markers
  *   shuttleVehicles      (z=650) — vehicle markers (above markerPane)
  *
  * Returns true once panes are ready so children can reference them safely.
  */
-function useShuttlePanes(): boolean {
+function useShuttlePanes(routeIDs: number[]): boolean {
   const map = useMap();
-  const [ready, setReady] = useState(false);
+  const [createdKey, setCreatedKey] = useState("");
+
+  const targetKey = routeIDs.join(",");
 
   useEffect(() => {
     const ensure = (name: string, z: string) => {
@@ -97,13 +99,16 @@ function useShuttlePanes(): boolean {
       }
     };
     ensure("shuttleRoutesOutline", "300");
-    ensure("shuttleRoutes", "301");
+    routeIDs.forEach((id, i) => {
+      ensure(`shuttleRoute-${id}`, String(301 + i));
+    });
     ensure("shuttleStops", "450");
     ensure("shuttleVehicles", "650");
-    setReady(true);
-  }, [map]);
+    setCreatedKey(targetKey);
+  }, [map, routeIDs, targetKey]);
 
-  return ready;
+  // Only ready when all current route panes have actually been created
+  return createdKey === targetKey && targetKey !== "";
 }
 
 /** Build an SVG pie-chart divIcon for multi-route stops. */
@@ -189,8 +194,8 @@ function RouteArrows({
                       opacity: 1,
                     }
                   : {
-                      color: "#fff",
-                      fillColor: darkenHex((ROUTE_COLOR_OVERRIDES[route.routeID] ?? route.color), 0.4),
+                      color: darkenHex((ROUTE_COLOR_OVERRIDES[route.routeID] ?? route.color), 0.5),
+                      fillColor: `#${ROUTE_COLOR_OVERRIDES[route.routeID] ?? route.color}`,
                       fillOpacity: 1,
                       weight: 1.5,
                       opacity: 1,
@@ -200,8 +205,9 @@ function RouteArrows({
           ],
         });
 
-        if (map.getPane("shuttleRoutes")) {
-          decorator.options.pane = "shuttleRoutes";
+        const routePane = `shuttleRoute-${route.routeID}`;
+        if (map.getPane(routePane)) {
+          decorator.options.pane = routePane;
         }
 
         decorator.addTo(map);
@@ -214,7 +220,7 @@ function RouteArrows({
       for (const d of decoratorsRef.current) map.removeLayer(d);
       decoratorsRef.current = [];
     };
-  }, [map, routes, shapeMap]);
+  }, [map, routes, shapeMap, dark]);
 
   return null;
 }
@@ -225,8 +231,9 @@ export default function ShuttleLayer({
   showVehicles,
   showStops,
 }: ShuttleLayerProps) {
-  const panesReady = useShuttlePanes();
   const [routes, setRoutes] = useState<ShuttleRoute[]>([]);
+  const allRouteIDs = useMemo(() => routes.map((r) => r.routeID), [routes]);
+  const panesReady = useShuttlePanes(allRouteIDs);
   const [stops, setStops] = useState<ShuttleStop[]>([]);
   const [shapes, setShapes] = useState<ShuttleShape[]>([]);
   const [vehicles, setVehicles] = useState<ShuttleVehicle[]>([]);
@@ -356,7 +363,7 @@ export default function ShuttleLayer({
           <Polyline
             key={`route-${route.routeID}`}
             positions={pts}
-            pane="shuttleRoutes"
+            pane={`shuttleRoute-${route.routeID}`}
             pathOptions={{
               color: routeColor(route),
               weight: 5,
@@ -369,7 +376,7 @@ export default function ShuttleLayer({
       })}
 
       {/* Direction arrows on route polylines */}
-      <RouteArrows routes={filteredRoutes} shapeMap={shapeMap} />
+      <RouteArrows routes={filteredRoutes} shapeMap={shapeMap} dark={dark} />
 
       {/* Stop markers — colored by route */}
       {filteredStops.map((stop) => {
