@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { MapContainer, TileLayer, useMap, CircleMarker, Popup } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -94,11 +94,9 @@ function distanceKm(lat1: number, lng1: number, lat2: number, lng2: number): num
 }
 
 export default function ParkingMap() {
-  const [stored] = useState(loadSettings);
-
   const [now, setNow] = useState(() => new Date());
   const [selectedLot, setSelectedLot] = useState<ParkingLot | null>(null);
-  const [dark, setDark] = useState<boolean | null>(stored.dark ?? null);
+  const [dark, setDark] = useState<boolean | null>(null);
 
   const [search, setSearch] = useState("");
   const [statusFilters, setStatusFilters] = useState<Set<StatusColor>>(new Set());
@@ -109,31 +107,46 @@ export default function ParkingMap() {
   const [locatingUser, setLocatingUser] = useState(false);
 
   // Shuttle state
-  const [shuttleMode, setShuttleMode] = useState(stored.shuttleMode ?? true);
+  const [shuttleMode, setShuttleMode] = useState(true);
   const [apiRoutes, setApiRoutes] = useState<ShuttleRoute[]>([]);
-  const [visibleRouteIDs, setVisibleRouteIDs] = useState<Set<number>>(
-    stored.visibleRouteIDs ? new Set(stored.visibleRouteIDs) : new Set(),
-  );
-  const [showVehicles, setShowVehicles] = useState(stored.showVehicles ?? true);
-  const [showStops, setShowStops] = useState(stored.showStops ?? true);
+  const [visibleRouteIDs, setVisibleRouteIDs] = useState<Set<number>>(new Set());
+  const [showVehicles, setShowVehicles] = useState(true);
+  const [showStops, setShowStops] = useState(true);
+  const settingsReadyRef = useRef(false);
 
-  // Fetch API routes once; default all visible only if no stored preference
+  // Restore settings from localStorage and fetch routes on mount (client-side only)
   useEffect(() => {
-    let cancelled = false;
+    const saved = loadSettings();
+    if (saved.dark != null) setDark(saved.dark);
+    if (saved.shuttleMode != null) setShuttleMode(saved.shuttleMode);
+    if (saved.showVehicles != null) setShowVehicles(saved.showVehicles);
+    if (saved.showStops != null) setShowStops(saved.showStops);
+
     fetchRoutes().then((routes) => {
-      if (cancelled) return;
       setApiRoutes(routes);
-      // Only default to all-visible when there's no stored preference
-      if (!stored.visibleRouteIDs) {
+      if (saved.visibleRouteIDs && saved.visibleRouteIDs.length > 0) {
+        setVisibleRouteIDs(new Set(saved.visibleRouteIDs));
+      } else {
         setVisibleRouteIDs(new Set(routes.map((r) => r.routeID)));
       }
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+      // Only start persisting after initial state is fully resolved
+      settingsReadyRef.current = true;
+    }).catch(() => {
+      settingsReadyRef.current = true;
+    });
+
+    if (saved.dark == null) {
+      const mq = window.matchMedia("(prefers-color-scheme: dark)");
+      setDark(mq.matches);
+      const handler = (e: MediaQueryListEvent) => setDark(e.matches);
+      mq.addEventListener("change", handler);
+      return () => mq.removeEventListener("change", handler);
+    }
   }, []);
 
-  // Persist settings whenever they change
+  // Persist settings whenever they change (only after initial restore is done)
   useEffect(() => {
+    if (!settingsReadyRef.current) return;
     saveSettings({
       dark: dark ?? undefined,
       shuttleMode,
@@ -142,17 +155,6 @@ export default function ParkingMap() {
       showStops,
     });
   }, [dark, shuttleMode, visibleRouteIDs, showVehicles, showStops]);
-
-  useEffect(() => {
-    // Only listen to system preference if no stored dark mode
-    if (stored.dark != null) return;
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    setDark(mq.matches);
-    const handler = (e: MediaQueryListEvent) => setDark(e.matches);
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), UPDATE_INTERVAL);

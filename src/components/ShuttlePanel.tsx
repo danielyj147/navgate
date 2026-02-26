@@ -62,6 +62,7 @@ export default function ShuttlePanel({
   const [showInactive, setShowInactive] = useState(false);
   const [showInactiveRoutes, setShowInactiveRoutes] = useState(false);
   const prevLiveRef = useRef<Set<number>>(new Set());
+  const baselineSetRef = useRef(false);
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 15_000);
@@ -81,9 +82,20 @@ export default function ShuttlePanel({
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
-  // Auto-check routes that gain vehicles, auto-uncheck routes that lose vehicles
+  // Auto-check routes that gain vehicles, auto-uncheck routes that lose vehicles.
+  // Wait for the first real vehicle data to establish a baseline before auto-toggling.
   useEffect(() => {
+    if (activeVehicles.length === 0) return;
+
     const currentLive = new Set(activeVehicles.map((v) => v.routeID));
+
+    if (!baselineSetRef.current) {
+      // First real data — record baseline, don't toggle anything
+      prevLiveRef.current = currentLive;
+      baselineSetRef.current = true;
+      return;
+    }
+
     const prev = prevLiveRef.current;
 
     // Find newly active and newly inactive routes
